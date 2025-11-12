@@ -5,23 +5,37 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "alphapulldown-input-parser"
 version = "0.1.0"
-description = "Fold specification parser shared by AlphaPulldown tooling"
+description = "Fold specification parser for AlphaPulldown"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
   {name = "Kosinski Lab", email = "alphapulldown@embl-hamburg.de"}
 ]
 requires-python = ">=3.8"
+keywords = [
+  "alphapulldown",
+  "folding",
+  "bioinformatics",
+  "parser",
+]
 classifiers = [
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
   "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent"
 ]
 dependencies = []
 
 [project.optional-dependencies]
 dev = [
   "pytest",
+  "pytest-cov",
+  "build",
+  "twine",
 ]
 
 [project.urls]
