@@ -8,9 +8,18 @@ from itertools import product
 from pathlib import Path
 from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-class FormatError(ValueError):
-    """Raised when a fold specification cannot be parsed."""
+
+def _deduplicate_preserve_order(items: Iterable[str]) -> Tuple[str, ...]:
+    """Return a tuple containing the first occurrence of every item."""
+    return tuple(dict.fromkeys(items))
+
+
+def _strip_path_and_extension(value: str) -> str:
+    return Path(value).stem
 
 
 def _format_error(spec: str, msg: str | None = None) -> None:
@@ -20,16 +29,30 @@ def _format_error(spec: str, msg: str | None = None) -> None:
     raise FormatError(f"{base}{detail}")
 
 
+def _read_nonempty_lines(path: Path) -> List[str]:
+    with path.open(mode="r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Core data structures
+# ---------------------------------------------------------------------------
+
+
+class FormatError(ValueError):
+    """Raised when a fold specification cannot be parsed."""
+
+
 @dataclass(frozen=True)
 class Region:
-    """Closed interval over the protein sequence."""
+    """1-based closed interval over the protein sequence."""
 
     start: int
     end: int
 
     def __post_init__(self) -> None:
-        if self.start < 0 or self.end < 0:
-            raise ValueError("Region boundaries must be non-negative integers.")
+        if self.start < 1 or self.end < 1:
+            raise ValueError("Region boundaries must be positive integers (1-based).")
         if self.start > self.end:
             raise ValueError("Region start must not exceed region end.")
 
@@ -49,12 +72,121 @@ class RegionSelection:
         return cls(regions=None)
 
 
+# Either {"json_input": "/path/to.json"} or {"CHAIN_A": RegionSelection(...)}
 FoldEntry = Dict[str, Union[str, RegionSelection]]
 
 
 class ExpandResult(NamedTuple):
     formatted_folds: List[FoldEntry]
     missing_features: List[str]
+
+
+# ---------------------------------------------------------------------------
+# Fold dataset
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FoldDataset:
+    """Container encapsulating parsed fold specifications."""
+
+    fold_specifications: Tuple[str, ...]
+    sequences_by_origin: Dict[str, Tuple[str, ...]]
+    sequences_by_fold: Dict[str, Tuple[str, ...]]
+
+    @property
+    def unique_sequences(self) -> Tuple[str, ...]:
+        ordered: List[str] = []
+        for spec in self.fold_specifications:
+            ordered.extend(self.sequences_by_fold.get(spec, ()))
+        return _deduplicate_preserve_order(ordered)
+
+    def symlink_local_files(self, output_directory: Union[str, Path]) -> None:
+        output = Path(output_directory).expanduser().resolve()
+        output.mkdir(parents=True, exist_ok=True)
+        for file in self.sequences_by_origin.get("local", ()):
+            source = Path(file).expanduser()
+            target = output / Path(file).name
+            if target.exists() or target.is_symlink():
+                target.unlink()
+            target.symlink_to(source)
+
+    @classmethod
+    def from_fold_specifications(
+        cls,
+        fold_specifications: Sequence[str],
+        *,
+        protein_delimiter: str = "+",
+    ) -> "FoldDataset":
+        normalized_specs: List[str] = []
+        sequences_by_fold: Dict[str, Tuple[str, ...]] = {}
+        referenced_sequences: List[str] = []
+
+        for specification in fold_specifications:
+            tokens = [
+                token.strip()
+                for token in specification.split(protein_delimiter)
+                if token.strip()
+            ]
+            if not tokens:
+                continue
+
+            normalized_tokens: List[str] = []
+            per_fold_sequences: List[str] = []
+            for token in tokens:
+                parts = [part.strip() for part in token.split(":")]
+                protein_reference = parts[0]
+                referenced_sequences.append(protein_reference)
+
+                base_name = _strip_path_and_extension(protein_reference)
+                per_fold_sequences.append(base_name)
+                suffix_components = [part for part in parts[1:] if part]
+                normalized_tokens.append(
+                    ":".join([base_name, *suffix_components]) if suffix_components else base_name
+                )
+
+            normalized_spec = protein_delimiter.join(normalized_tokens)
+            normalized_specs.append(normalized_spec)
+            sequences_by_fold[normalized_spec] = _deduplicate_preserve_order(per_fold_sequences)
+
+        unique_inputs = _deduplicate_preserve_order(referenced_sequences)
+        sequences_by_origin: Dict[str, List[str]] = {"uniprot": [], "local": []}
+        for sequence in unique_inputs:
+            path = Path(sequence).expanduser()
+            has_separator = "/" in sequence or "\\" in sequence
+            has_suffix = path.suffix != ""
+            exists = path.exists() and (path.is_file() or path.is_symlink())
+            is_local = exists and (has_separator or has_suffix)
+            if is_local:
+                sequences_by_origin["local"].append(str(path.resolve()))
+            else:
+                sequences_by_origin["uniprot"].append(sequence)
+
+        return cls(
+            fold_specifications=_deduplicate_preserve_order(normalized_specs),
+            sequences_by_origin={
+                key: tuple(values) for key, values in sequences_by_origin.items()
+            },
+            sequences_by_fold=sequences_by_fold,
+        )
+
+    @classmethod
+    def from_file(
+        cls,
+        filepath: Union[str, Path],
+        *,
+        protein_delimiter: str = "+",
+    ) -> "FoldDataset":
+        path = Path(filepath).expanduser().resolve()
+        specifications = _deduplicate_preserve_order(_read_nonempty_lines(path))
+        return cls.from_fold_specifications(
+            specifications,
+            protein_delimiter=protein_delimiter,
+        )
+
+# ---------------------------------------------------------------------------
+# Feature index
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -83,18 +215,30 @@ def _build_feature_index(directories: Sequence[Path]) -> FeatureIndex:
                 continue
             filename = entry.name
             if filename.endswith(".json"):
-                json_files.setdefault(filename, str(entry))
+                keys = {entry.name, entry.stem}
+                for key in keys:
+                    json_files.setdefault(key, str(entry))
             elif filename.endswith(".pkl"):
                 base = filename[:-4]
-                pkl.setdefault(base, []).append(str(entry))
+                keys = {base, entry.name, entry.stem}
+                for key in keys:
+                    pkl.setdefault(key, []).append(str(entry))
             elif filename.endswith(".pkl.xz"):
                 base = filename[:-7]
-                pkl.setdefault(base, []).append(str(entry))
+                keys = {base, entry.name, Path(filename[:-3]).stem}
+                for key in keys:
+                    pkl.setdefault(key, []).append(str(entry))
 
     return FeatureIndex(
-        pkl={name: tuple(paths) for name, paths in pkl.items()},
+        # deduplicate paths while preserving order
+        pkl={name: tuple(dict.fromkeys(paths)) for name, paths in pkl.items()},
         json=json_files,
     )
+
+
+# ---------------------------------------------------------------------------
+# Expansion helpers
+# ---------------------------------------------------------------------------
 
 
 def _extract_copy_and_regions(tokens: Sequence[str], spec: str) -> Tuple[int, Sequence[str]]:
@@ -131,6 +275,11 @@ def _parse_regions(region_tokens: Sequence[str], spec: str) -> RegionSelection:
     return RegionSelection(regions=tuple(regions))
 
 
+# ---------------------------------------------------------------------------
+# Expansion logic
+# ---------------------------------------------------------------------------
+
+
 def expand_fold_specification(
     spec: str,
     features_directory: Iterable[str],
@@ -138,9 +287,13 @@ def expand_fold_specification(
     *,
     feature_index: FeatureIndex | None = None,
 ) -> ExpandResult:
-    """Expand a single fold specification.
+    """Expand a single fold specification into fold entries.
 
-    Returns a tuple of (formatted_folds, missing_features).
+    Example:
+        >>> expand_fold_specification("protA:1-10+protB", ["/features"], "+", feature_index=index)
+
+    Returns:
+        ExpandResult with fold entries and missing feature names. Pure function.
     """
 
     index = feature_index
@@ -151,30 +304,47 @@ def expand_fold_specification(
     formatted_folds: List[FoldEntry] = []
     missing_features: List[str] = []
 
-    for pf in spec.split(protein_delimiter):
-        if pf.endswith(".json"):
-            json_name = pf
-            json_path = index.json_path(json_name)
-            if json_path:
-                formatted_folds.append({"json_input": json_path})
-            else:
-                missing_features.append(json_name)
+    for raw_pf in spec.split(protein_delimiter):
+        pf = raw_pf.strip()
+        if not pf:
             continue
 
-        tokens = pf.split(":")
+        if pf.endswith(".json"):
+            path_pf = Path(pf)
+            json_path: Optional[str] = None
+            for json_key in (path_pf.name, path_pf.stem):
+                json_path = index.json_path(json_key)
+                if json_path:
+                    formatted_folds.append({"json_input": json_path})
+                    break
+            if json_path:
+                continue
+            missing_features.append(path_pf.name)
+            continue
+
+        tokens = [token.strip() for token in pf.split(":")]
         if not tokens or not tokens[0]:
             _format_error(spec, msg="Protein token is empty.")
 
         name = tokens[0]
+        name_path = Path(name)
+        name_candidates = [
+            name,
+            name_path.name,
+            name_path.stem,
+        ]
+        # copy count can be either second or last token
         number, region_tokens = _extract_copy_and_regions(tokens, spec)
         regions = _parse_regions(region_tokens, spec)
 
-        if not index.has_pkl(name):
+        # try different name representations against prebuilt index
+        canonical_name = next((candidate for candidate in name_candidates if index.has_pkl(candidate)), None)
+        if canonical_name is None:
             missing_features.append(name)
             continue
 
         for _ in range(number):
-            formatted_folds.append({name: regions})
+            formatted_folds.append({canonical_name: regions})
 
     return ExpandResult(formatted_folds=formatted_folds, missing_features=missing_features)
 
@@ -184,7 +354,14 @@ def parse_fold(
     features_directory: Iterable[str],
     protein_delimiter: str,
 ) -> List[List[FoldEntry]]:
-    """Parse a list of fold specifications into folding jobs."""
+    """Parse a list of fold specifications into folding jobs.
+
+    Example:
+        >>> parse_fold(["protA+protB"], ["/features"], "+")
+
+    Returns:
+        List of jobs (each job is a list of FoldEntry). Pure function.
+    """
 
     directories = tuple(features_directory)
     directory_labels = [str(d) for d in directories]
@@ -211,9 +388,9 @@ def parse_fold(
     return all_folding_jobs
 
 
-def _read_nonempty_lines(path: Path) -> List[str]:
-    with path.open(mode="r", encoding="utf-8") as handle:
-        return [line.strip() for line in handle if line.strip()]
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def generate_fold_specifications(
@@ -248,20 +425,20 @@ def generate_fold_specifications(
             return []
         lines_per_file.append(lines)
 
-    combinations = list(product(*lines_per_file)) if lines_per_file else []
-
-    if exclude_permutations:
-        filtered: List[Tuple[str, ...]] = []
-        seen: set[Tuple[str, ...]] = set()
-        for combo in combinations:
-            normalized = tuple(sorted(map(str, combo)))
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            filtered.append(tuple(map(str, combo)))
-        combinations = filtered
+    if not lines_per_file:
+        combinations: List[Tuple[str, ...]] = []
     else:
-        combinations = [tuple(map(str, combo)) for combo in combinations]
+        combinations_iter = product(*lines_per_file)
+        seen: set[Tuple[str, ...]] = set()
+        combinations = []
+        for combo in combinations_iter:
+            typed_combo = tuple(map(str, combo))
+            if exclude_permutations:
+                normalized = tuple(sorted(typed_combo))
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+            combinations.append(typed_combo)
 
     specifications = [delimiter.join(combo) for combo in combinations]
 
