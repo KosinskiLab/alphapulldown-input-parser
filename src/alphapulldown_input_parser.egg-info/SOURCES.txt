@@ -1,9 +1,0 @@
-LICENSE
-README.md
-pyproject.toml
-src/alphapulldown_input_parser/__init__.py
-src/alphapulldown_input_parser/parser.py
-src/alphapulldown_input_parser.egg-info/PKG-INFO
-src/alphapulldown_input_parser.egg-info/SOURCES.txt
-src/alphapulldown_input_parser.egg-info/dependency_links.txt
-src/alphapulldown_input_parser.egg-info/top_level.txt
