@@ -211,6 +211,32 @@ def patch_feature_index(monkeypatch):
             None,
             id="json_in_multiple_dirs",
         ),
+        pytest.param(
+            ["protein1.json:3"],
+            ["dir1"],
+            "+",
+            {"pkl": {}, "json": {"protein1.json": "dir1/protein1.json"}},
+            [
+                [
+                    {"json_input": "dir1/protein1.json"},
+                    {"json_input": "dir1/protein1.json"},
+                    {"json_input": "dir1/protein1.json"},
+                ]
+            ],
+            None,
+            None,
+            id="json_with_copy_number",
+        ),
+        pytest.param(
+            ["protein1.json:1-10"],
+            ["dir1"],
+            "+",
+            {"pkl": {}, "json": {"protein1.json": "dir1/protein1.json"}},
+            None,
+            FormatError,
+            None,
+            id="json_with_range_not_supported",
+        ),
     ],
 )
 def test_parse_fold(
