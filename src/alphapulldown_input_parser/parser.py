@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+import os
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
@@ -313,8 +314,8 @@ def expand_fold_specification(
         base_token = tokens[0] if tokens else ""
 
         # JSON inputs: support optional copy number, but no ranges.
-        if base_token.endswith(".json"):
-            path_pf = Path(base_token)
+        path_pf = Path(f"{featured_directory[0]}/{base_token}_af3_input.json")
+        if os.path.isfile(path_pf):
             json_path: Optional[str] = None
             for json_key in (path_pf.name, path_pf.stem):
                 json_path = index.json_path(json_key)
@@ -366,7 +367,7 @@ def expand_fold_specification(
         regions = _parse_regions(region_tokens, spec)
 
         # try different name representations against prebuilt index
-        canonical_name = next((candidate for candidate in name_candidates if index.has_pkl(candidate)), None)
+        canonical_name = next((candidate for candidate in name_candidates if index.has_}(candidate)), None)
         if canonical_name is None:
             missing_features.append(name)
             continue
