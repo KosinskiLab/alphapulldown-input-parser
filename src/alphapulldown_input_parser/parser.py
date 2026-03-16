@@ -367,7 +367,7 @@ def expand_fold_specification(
         regions = _parse_regions(region_tokens, spec)
 
         # try different name representations against prebuilt index
-        canonical_name = next((candidate for candidate in name_candidates if index.has_}(candidate)), None)
+        canonical_name = next((candidate for candidate in name_candidates if index.has_pkl}(candidate)), None)
         if canonical_name is None:
             missing_features.append(name)
             continue
