@@ -23,15 +23,22 @@ The parser is dependency-free and works across AlphaPulldown, the Snakemake
 pipeline, or any other tooling that consumes the same fold syntax.
 
 As of `0.4.0`, AF3 JSON feature files support the same copy/range suffixes as
-classic AlphaPulldown feature pickles. For example:
+classic AlphaPulldown feature pickles, including discontinuous regions and copy
+counts. For example:
 
 ```python
 parse_fold(
-    ["P01258_af3_input.json:1-100:2"],
+    [
+        "P01258_af3_input.json:1-100",
+        "P01258_af3_input.json:1-100:150-200",
+        "P01258_af3_input.json:2:1-100:150-200+P01579_af3_input.json",
+    ],
     features_directory=["/path/to/features"],
     protein_delimiter="+",
 )
 ```
 
-This expands to two folding entries for the same AF3 JSON feature file, each
-restricted to residues `1-100`.
+AlphaPulldown and AlphaPulldownSnakemake can then preserve those AF3 JSON
+regions during input preparation. For the AlphaFold 3 backend, discontinuous
+regions are expanded into separate cropped chains rather than one continuous
+polymer chain.
