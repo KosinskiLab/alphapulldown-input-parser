@@ -72,7 +72,8 @@ class RegionSelection:
         return cls(regions=None)
 
 
-# Either {"json_input": "/path/to.json"} or {"CHAIN_A": RegionSelection(...)}
+# Either {"json_input": "/path/to.json", "regions": RegionSelection(...)?}
+# or {"CHAIN_A": RegionSelection(...)}
 FoldEntry = Dict[str, Union[str, RegionSelection]]
 
 
@@ -312,39 +313,21 @@ def expand_fold_specification(
         tokens = [token.strip() for token in pf.split(":")]
         base_token = tokens[0] if tokens else ""
 
-        # JSON inputs: support optional copy number, but no ranges.
+        # JSON inputs: support optional copy number and region ranges.
         if base_token.endswith(".json"):
             path_pf = Path(base_token)
             json_path: Optional[str] = None
             for json_key in (path_pf.name, path_pf.stem):
                 json_path = index.json_path(json_key)
                 if json_path:
-                    # Handle optional copy number for JSON inputs.
-                    if len(tokens) == 1:
-                        copies = 1
-                    else:
-                        extra_tokens = tokens[1:]
-                        # Ranges (e.g. "1-10") are not supported for JSON feature files.
-                        if any("-" in tok for tok in extra_tokens):
-                            _format_error(
-                                spec,
-                                msg="Region ranges are not supported for JSON feature files.",
-                            )
-                        if len(extra_tokens) != 1:
-                            _format_error(
-                                spec,
-                                msg="JSON feature files support only an optional copy number.",
-                            )
-                        try:
-                            copies = int(extra_tokens[0])
-                        except ValueError:
-                            _format_error(
-                                spec,
-                                msg="Copy number for JSON feature file must be an integer.",
-                            )
+                    copies, region_tokens = _extract_copy_and_regions(tokens, spec)
+                    regions = _parse_regions(region_tokens, spec)
 
                     for _ in range(copies):
-                        formatted_folds.append({"json_input": json_path})
+                        json_entry: FoldEntry = {"json_input": json_path}
+                        if not regions.is_all:
+                            json_entry["regions"] = regions
+                        formatted_folds.append(json_entry)
                     break
             if json_path:
                 continue

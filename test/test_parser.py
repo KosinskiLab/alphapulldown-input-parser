@@ -232,10 +232,40 @@ def patch_feature_index(monkeypatch):
             ["dir1"],
             "+",
             {"pkl": {}, "json": {"protein1.json": "dir1/protein1.json"}},
+            [[{"json_input": "dir1/protein1.json", "regions": selection_ranges((1, 10))}]],
             None,
-            FormatError,
             None,
-            id="json_with_range_not_supported",
+            id="json_with_range",
+        ),
+        pytest.param(
+            ["protein1.json:2:1-10:20-30"],
+            ["dir1"],
+            "+",
+            {"pkl": {}, "json": {"protein1.json": "dir1/protein1.json"}},
+            [
+                [
+                    {"json_input": "dir1/protein1.json", "regions": selection_ranges((1, 10), (20, 30))},
+                    {"json_input": "dir1/protein1.json", "regions": selection_ranges((1, 10), (20, 30))},
+                ]
+            ],
+            None,
+            None,
+            id="json_with_copy_and_regions",
+        ),
+        pytest.param(
+            ["protein1.json:1-10:20-30:2"],
+            ["dir1"],
+            "+",
+            {"pkl": {}, "json": {"protein1.json": "dir1/protein1.json"}},
+            [
+                [
+                    {"json_input": "dir1/protein1.json", "regions": selection_ranges((1, 10), (20, 30))},
+                    {"json_input": "dir1/protein1.json", "regions": selection_ranges((1, 10), (20, 30))},
+                ]
+            ],
+            None,
+            None,
+            id="json_with_regions_and_copy",
         ),
     ],
 )
