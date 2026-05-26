@@ -276,6 +276,39 @@ def _parse_regions(region_tokens: Sequence[str], spec: str) -> RegionSelection:
     return RegionSelection(regions=tuple(regions))
 
 
+def parse_fold_chains(
+    spec: str,
+    protein_delimiter: str = "+",
+) -> List[Tuple[str, int, RegionSelection]]:
+    """Parse a single fold spec into ``(chain_name, copies, regions)`` triples.
+
+    Pure-syntactic parse — no filesystem access, no feature-index lookup —
+    intended for tools that need the chain composition of a spec *before* the
+    corresponding features exist on disk (e.g. for resource sizing or input
+    validation). Follows the AlphaPulldown ``name[:copies][:region...]``
+    convention; the chain ``name`` is returned **unchanged** (no path or
+    extension stripping; the caller can normalise if needed).
+
+    Example:
+        >>> parse_fold_chains("protA:2:1-100+protB", "+")
+        [('protA', 2, RegionSelection(regions=(Region(start=1, end=100),))),
+         ('protB', 1, RegionSelection(regions=None))]
+    """
+    chains: List[Tuple[str, int, RegionSelection]] = []
+    for raw_pf in str(spec).split(protein_delimiter):
+        pf = raw_pf.strip()
+        if not pf:
+            continue
+        tokens = [token.strip() for token in pf.split(":") if token.strip()]
+        if not tokens:
+            continue
+        name = tokens[0]
+        copies, region_tokens = _extract_copy_and_regions(tokens, spec)
+        regions = _parse_regions(region_tokens, spec)
+        chains.append((name, copies, regions))
+    return chains
+
+
 # ---------------------------------------------------------------------------
 # Expansion logic
 # ---------------------------------------------------------------------------
