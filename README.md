@@ -12,12 +12,16 @@ or, for local development:
 pip install -e /path/to/alphapulldown-input-parser
 ```
 
-The package exposes two helpers:
+The package exposes three helpers:
 
 * `parse_fold(...)` – mirrors the historical AlphaPulldown helper and performs
   feature existence checks.
 * `expand_fold_specification(...)` – expands a single fold string without
   raising if features are missing.
+* `parse_fold_chains(spec, protein_delimiter="+")` – **pure-syntactic** parse
+  of a single spec into `(chain_name, copies, regions)` triples, with no
+  filesystem access or feature lookup. Useful for resource sizing or input
+  validation before features exist on disk.
 
 The parser is dependency-free and works across AlphaPulldown, the Snakemake
 pipeline, or any other tooling that consumes the same fold syntax.

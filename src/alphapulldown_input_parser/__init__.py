@@ -8,11 +8,13 @@ from .parser import (
     expand_fold_specification,
     generate_fold_specifications,
     parse_fold,
+    parse_fold_chains,
 )
 
 __all__ = [
     "expand_fold_specification",
     "parse_fold",
+    "parse_fold_chains",
     "FormatError",
     "FeatureIndex",
     "Region",

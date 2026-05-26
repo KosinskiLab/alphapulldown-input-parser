@@ -18,6 +18,7 @@ from alphapulldown_input_parser import (
     RegionSelection,
     generate_fold_specifications,
     parse_fold,
+    parse_fold_chains,
 )
 
 
@@ -339,3 +340,62 @@ def test_generate_fold_specifications_writes_to_disk(tmp_path: Path) -> None:
 
     assert result == ["p1+p2"]
     assert output_path.read_text(encoding="utf-8") == "p1+p2\n"
+
+
+# ---------------------------------------------------------------------------
+# parse_fold_chains
+# ---------------------------------------------------------------------------
+
+
+def test_parse_fold_chains_basic_heteromer() -> None:
+    assert parse_fold_chains("A+B") == [
+        ("A", 1, RegionSelection.all()),
+        ("B", 1, RegionSelection.all()),
+    ]
+
+
+def test_parse_fold_chains_copies() -> None:
+    # copy number as the second token (canonical form)
+    assert parse_fold_chains("A:2") == [("A", 2, RegionSelection.all())]
+    # copy + region: name:copies:region
+    assert parse_fold_chains("A:2:1-100") == [
+        ("A", 2, RegionSelection(regions=(Region(start=1, end=100),))),
+    ]
+
+
+def test_parse_fold_chains_region_without_copies() -> None:
+    # A region alone (not a bare integer) implies a single copy
+    assert parse_fold_chains("A:1-100") == [
+        ("A", 1, RegionSelection(regions=(Region(start=1, end=100),))),
+    ]
+
+
+def test_parse_fold_chains_multiple_regions_and_copies() -> None:
+    chains = parse_fold_chains("A:2:1-100:200-300+B")
+    assert chains[0][0] == "A"
+    assert chains[0][1] == 2
+    assert chains[0][2] == RegionSelection(
+        regions=(Region(start=1, end=100), Region(start=200, end=300))
+    )
+    assert chains[1] == ("B", 1, RegionSelection.all())
+
+
+def test_parse_fold_chains_preserves_paths_and_json_names() -> None:
+    """Names are returned verbatim — no extension or path stripping."""
+    chains = parse_fold_chains("/path/to/protA_af3_input.json:2+protB.fasta")
+    assert chains[0][0] == "/path/to/protA_af3_input.json"
+    assert chains[0][1] == 2
+    assert chains[1][0] == "protB.fasta"
+    assert chains[1][1] == 1
+
+
+def test_parse_fold_chains_custom_delimiter_and_whitespace() -> None:
+    assert parse_fold_chains(" A , B ", protein_delimiter=",") == [
+        ("A", 1, RegionSelection.all()),
+        ("B", 1, RegionSelection.all()),
+    ]
+    # empty tokens are skipped
+    assert parse_fold_chains("A++B") == [
+        ("A", 1, RegionSelection.all()),
+        ("B", 1, RegionSelection.all()),
+    ]
