@@ -22,6 +22,22 @@ def _strip_path_and_extension(value: str) -> str:
     return Path(value).stem
 
 
+def _normalize_reference_name(value: str) -> str:
+    """Normalize a fold token's name for use as a chain identifier.
+
+    The directory path is always dropped. A ``.json`` extension is *preserved*
+    because such tokens are direct AlphaFold 3 JSON inputs (e.g. ligands), not
+    proteins to fetch or build features for; stripping it would make them
+    indistinguishable from a protein named ``<stem>`` downstream (this is the
+    cause of AlphaPulldownSnakemake issue #41). Any other extension is stripped,
+    matching the historical behaviour for protein references given as file paths.
+    """
+    name = Path(value).name
+    if name.lower().endswith(".json"):
+        return name
+    return _strip_path_and_extension(value)
+
+
 def _format_error(spec: str, msg: str | None = None) -> None:
     """Mirror the historical AlphaPulldown error message."""
     base = f"Your format: {spec} is wrong. The program will terminate."
@@ -139,7 +155,7 @@ class FoldDataset:
                 protein_reference = parts[0]
                 referenced_sequences.append(protein_reference)
 
-                base_name = _strip_path_and_extension(protein_reference)
+                base_name = _normalize_reference_name(protein_reference)
                 per_fold_sequences.append(base_name)
                 suffix_components = [part for part in parts[1:] if part]
                 normalized_tokens.append(

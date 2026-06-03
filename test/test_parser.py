@@ -399,3 +399,29 @@ def test_parse_fold_chains_custom_delimiter_and_whitespace() -> None:
         ("A", 1, RegionSelection.all()),
         ("B", 1, RegionSelection.all()),
     ]
+
+
+def test_fold_dataset_preserves_json_extension() -> None:
+    """Regression for AlphaPulldownSnakemake #41.
+
+    ``*.json`` tokens are direct AF3 inputs (e.g. ligands), not proteins to fetch
+    or build features for. FoldDataset normalization must keep the ``.json``
+    extension (dropping only the directory) so downstream consumers can still tell
+    them apart from a protein named ``<stem>``, while protein references given as
+    paths are still reduced to their stem.
+    """
+    from alphapulldown_input_parser.parser import FoldDataset
+
+    ds = FoldDataset.from_fold_specifications(
+        ["P12345+ligand.json:80", "/data/Prot.fasta+Q99999"],
+        protein_delimiter="+",
+    )
+
+    # .json preserved (path dropped, copy-number suffix kept); protein path+ext -> stem.
+    assert ds.fold_specifications == ("P12345+ligand.json:80", "Prot+Q99999")
+    assert ds.sequences_by_fold["P12345+ligand.json:80"] == ("P12345", "ligand.json")
+    assert ds.sequences_by_fold["Prot+Q99999"] == ("Prot", "Q99999")
+
+    # A bare ligand JSON keeps its extension too.
+    ds_single = FoldDataset.from_fold_specifications(["ligand.json"], protein_delimiter="+")
+    assert ds_single.fold_specifications == ("ligand.json",)
