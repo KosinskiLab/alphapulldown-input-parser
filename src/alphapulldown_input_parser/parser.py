@@ -22,6 +22,17 @@ def _strip_path_and_extension(value: str) -> str:
     return Path(value).stem
 
 
+def _is_json_name(value: str) -> bool:
+    """True for an AF3 JSON input name; ``--compress_features`` writes ``.json.xz``."""
+    lowered = str(value).lower()
+    return lowered.endswith(".json") or lowered.endswith(".json.xz")
+
+
+def _strip_xz(value: str) -> str:
+    """Drop a trailing ``.xz``; return other names unchanged."""
+    return value[: -len(".xz")] if value.lower().endswith(".xz") else value
+
+
 def _normalize_reference_name(value: str) -> str:
     """Normalize a fold token's name for use as a chain identifier.
 
@@ -31,9 +42,10 @@ def _normalize_reference_name(value: str) -> str:
     indistinguishable from a protein named ``<stem>`` downstream (this is the
     cause of AlphaPulldownSnakemake issue #41). Any other extension is stripped,
     matching the historical behaviour for protein references given as file paths.
+    ``.json.xz`` keeps both suffixes for the same reason.
     """
     name = Path(value).name
-    if name.lower().endswith(".json"):
+    if _is_json_name(name):
         return name
     return _strip_path_and_extension(value)
 
@@ -223,6 +235,9 @@ class FeatureIndex:
 def _build_feature_index(directories: Sequence[Path]) -> FeatureIndex:
     pkl: Dict[str, List[str]] = {}
     json_files: Dict[str, str] = {}
+    # Registered in a second pass so an uncompressed file wins when both exist
+    # (iteration order is arbitrary, so `setdefault` alone would not be stable).
+    compressed_json: List[Tuple[str, Path]] = []
 
     for directory in directories:
         if not directory.is_dir():
@@ -235,6 +250,8 @@ def _build_feature_index(directories: Sequence[Path]) -> FeatureIndex:
                 keys = {entry.name, entry.stem}
                 for key in keys:
                     json_files.setdefault(key, str(entry))
+            elif filename.endswith(".json.xz"):
+                compressed_json.append((_strip_xz(filename), entry))
             elif filename.endswith(".pkl"):
                 base = filename[:-4]
                 keys = {base, entry.name, entry.stem}
@@ -245,6 +262,12 @@ def _build_feature_index(directories: Sequence[Path]) -> FeatureIndex:
                 keys = {base, entry.name, Path(filename[:-3]).stem}
                 for key in keys:
                     pkl.setdefault(key, []).append(str(entry))
+
+    # Indexed under all three spellings so a spec naming any of them resolves to
+    # the file on disk; AlphaPulldown decompresses on read.
+    for plain, entry in compressed_json:
+        for key in {entry.name, plain, Path(plain).stem}:
+            json_files.setdefault(key, str(entry))
 
     return FeatureIndex(
         # deduplicate paths while preserving order
@@ -362,11 +385,16 @@ def expand_fold_specification(
         tokens = [token.strip() for token in pf.split(":")]
         base_token = tokens[0] if tokens else ""
 
-        # JSON inputs: support optional copy number and region ranges.
-        if base_token.endswith(".json"):
+        # JSON inputs: support optional copy number and region ranges. Either
+        # spelling resolves to whichever file the index found.
+        if _is_json_name(base_token):
             path_pf = Path(base_token)
             json_path: Optional[str] = None
-            for json_key in (path_pf.name, path_pf.stem):
+            plain_name = _strip_xz(path_pf.name)
+            json_keys = _deduplicate_preserve_order(
+                (path_pf.name, plain_name, path_pf.stem, Path(plain_name).stem)
+            )
+            for json_key in json_keys:
                 json_path = index.json_path(json_key)
                 if json_path:
                     copies, region_tokens = _extract_copy_and_regions(tokens, spec)

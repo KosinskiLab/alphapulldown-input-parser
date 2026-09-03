@@ -425,3 +425,89 @@ def test_fold_dataset_preserves_json_extension() -> None:
     # A bare ligand JSON keeps its extension too.
     ds_single = FoldDataset.from_fold_specifications(["ligand.json"], protein_delimiter="+")
     assert ds_single.fold_specifications == ("ligand.json",)
+
+
+# ---------------------------------------------------------------------------
+# Compressed AF3 feature files (--compress_features)
+# ---------------------------------------------------------------------------
+
+
+def _write_af3_json(path: Path, compressed: bool) -> Path:
+    """Write a minimal AF3 input JSON, optionally lzma-compressed."""
+    import lzma
+
+    payload = '{"name": "x", "sequences": []}'
+    if compressed:
+        target = path.with_name(path.name + ".xz")
+        with lzma.open(target, "wt", encoding="utf-8") as handle:
+            handle.write(payload)
+        return target
+    path.write_text(payload, encoding="utf-8")
+    return path
+
+
+def test_parse_fold_finds_compressed_af3_features(tmp_path) -> None:
+    """``--compress_features`` writes ``*_af3_input.json.xz``, but callers ask for
+    the plain ``*_af3_input.json``; only ``*.json`` used to be indexed."""
+    features = tmp_path / "features"
+    features.mkdir()
+    for name in ("A_af3_input", "B_af3_input"):
+        _write_af3_json(features / f"{name}.json", compressed=True)
+
+    jobs = parse_fold(
+        ["A_af3_input.json+B_af3_input.json"], [str(features)], "+"
+    )
+    assert [Path(entry["json_input"]).name for entry in jobs[0]] == [
+        "A_af3_input.json.xz",
+        "B_af3_input.json.xz",
+    ]
+
+
+def test_parse_fold_accepts_explicit_xz_spelling(tmp_path) -> None:
+    """A fold spec may also name the compressed file directly."""
+    features = tmp_path / "features"
+    features.mkdir()
+    _write_af3_json(features / "A_af3_input.json", compressed=True)
+
+    jobs = parse_fold(["A_af3_input.json.xz:2"], [str(features)], "+")
+    assert [Path(entry["json_input"]).name for entry in jobs[0]] == [
+        "A_af3_input.json.xz",
+        "A_af3_input.json.xz",
+    ]
+
+
+def test_parse_fold_prefers_uncompressed_when_both_exist(tmp_path) -> None:
+    """Plain token -> plain file; naming the ``.xz`` still selects the compressed one."""
+    features = tmp_path / "features"
+    features.mkdir()
+    _write_af3_json(features / "A_af3_input.json", compressed=True)
+    _write_af3_json(features / "A_af3_input.json", compressed=False)
+
+    plain = parse_fold(["A_af3_input.json"], [str(features)], "+")
+    assert Path(plain[0][0]["json_input"]).name == "A_af3_input.json"
+
+    compressed = parse_fold(["A_af3_input.json.xz"], [str(features)], "+")
+    assert Path(compressed[0][0]["json_input"]).name == "A_af3_input.json.xz"
+
+
+def test_parse_fold_still_reports_genuinely_missing_features(tmp_path) -> None:
+    features = tmp_path / "features"
+    features.mkdir()
+    _write_af3_json(features / "A_af3_input.json", compressed=True)
+
+    with pytest.raises(FileNotFoundError, match=r"MISSING_af3_input\.json"):
+        parse_fold(["A_af3_input.json+MISSING_af3_input.json"], [str(features)], "+")
+
+
+def test_fold_dataset_preserves_compressed_json_extension() -> None:
+    """``.json.xz`` tokens stay JSON inputs, not proteins named ``<stem>.json``."""
+    from alphapulldown_input_parser.parser import FoldDataset
+
+    ds = FoldDataset.from_fold_specifications(
+        ["P12345+/data/ligand.json.xz:80"], protein_delimiter="+"
+    )
+    assert ds.fold_specifications == ("P12345+ligand.json.xz:80",)
+    assert ds.sequences_by_fold["P12345+ligand.json.xz:80"] == (
+        "P12345",
+        "ligand.json.xz",
+    )
